@@ -1,0 +1,60 @@
+#cloud-config
+users:
+  - name: ubuntu
+    lock_passwd: true
+    shell: /bin/bash
+    sudo:  ALL=(ALL) NOPASSWD:ALL
+    chpasswd: {expire: False}
+    ssh_authorized_keys:
+      - ${pubkey}
+
+write_files:
+  - content: |
+      #!/bin/bash
+      # retrieve the second interface name
+      ifaceSecondName=`ip -o link show | awk -F': ' '{print $2}' | head -2 | tail -1`
+      ifaceSecondMac=`ip -o link show | awk -F'link/ether ' '{print $2}' | awk -F' ' '{print $1}'| head -2 | tail -1`
+      # retrieve the last network interface name
+      ifaceLastName=`ip -o link show | awk -F': ' '{print $2}' | tail -1`
+      ifaceLastMac=`ip -o link show | awk -F'link/ether ' '{print $2}' | awk -F' ' '{print $1}'| tail -1`
+      mv ${netplanFile} ${netplanFile}.old
+      echo "network:" | sudo tee ${netplanFile}
+      echo "    ethernets:" | sudo tee -a ${netplanFile}
+      echo "        $ifaceSecondName:" | sudo tee -a ${netplanFile}
+      echo "            dhcp4: true" | sudo tee -a ${netplanFile}
+      echo "            match:" | sudo tee -a ${netplanFile}
+      echo "                macaddress: $ifaceSecondMac" | sudo tee -a ${netplanFile}
+      echo "            set-name: $ifaceSecondName" | sudo tee -a ${netplanFile}
+      echo "        $ifaceLastName:" | sudo tee -a ${netplanFile}
+      echo "            dhcp4: true" | sudo tee -a ${netplanFile}
+      echo "            match:" | sudo tee -a ${netplanFile}
+      echo "                macaddress: $ifaceLastMac" | sudo tee -a ${netplanFile}
+      echo "            set-name: $ifaceLastName" | sudo tee -a ${netplanFile}
+      echo "    version: 2" | sudo tee -a ${netplanFile}
+      #sudo netplan apply
+      sleep 10
+      sudo apt-get update
+      sudo apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+      sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+      sudo apt-get install -y docker-ce=${dockerVersion}
+      sudo usermod -a -G docker ${username}
+      su - ${username}
+      ping www.google.com -c 1
+      ping foo -c 1
+      while [ $? -ne 0 ] ; do docker login --username ${docker_registry_username} --password ${docker_registry_password} ; sleep 5 ; done
+      #
+      # cni image download
+      #
+      wget ${cniUrl} -O cni.yml
+      for image in $(cat cni.yml | grep 'image: ' | awk -F 'image: ' '{print $2}'); do docker pull $image ; done
+      echo "cloud init done" | tee /tmp/cloudInitDone.log
+    path: /opt/bootstrap.sh
+    permissions: 0755
+
+  - content: |
+      ubuntu ALL=(ALL) NOPASSWD:ALL
+    path: /etc/sudoers.d/ubuntu
+
+runcmd:
+  - /opt/bootstrap.sh
